@@ -1,20 +1,20 @@
 const { neon } = require('@neondatabase/serverless');
-
 const sql = neon(process.env.DATABASE_URL);
 
 function send(res, status, data) {
   res.statusCode = status;
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
   res.end(JSON.stringify(data));
 }
-
-function clean(v, max = 100) {
-  return String(v || '').trim().slice(0, max);
-}
+function clean(v, max = 100) { return String(v || '').trim().slice(0, max); }
 
 module.exports = async function handler(req, res) {
   try {
+    if (req.method === 'OPTIONS') return send(res, 204, {});
     if (!process.env.DATABASE_URL) return send(res, 500, { error: 'DATABASE_URL is not configured' });
 
     if (req.method === 'GET') {
@@ -22,36 +22,28 @@ module.exports = async function handler(req, res) {
       const rows = await sql`SELECT item_id, text, created_by, created_at FROM checklist_custom_items ORDER BY created_at ASC`;
       const modeRow = rows.find(v => v.item_id === '__meta_mode__');
       const titleRow = rows.find(v => v.item_id === '__meta_title__');
-      const customItems = rows.filter(v => !v.item_id.startsWith('__meta_'));
       return send(res, 200, {
         checks,
-        customItems,
+        customItems: rows.filter(v => !v.item_id.startsWith('__meta_')),
         mode: modeRow?.text || 'default',
         title: titleRow?.text || '김해 롯데워터파크 커플 준비물 체크리스트'
       });
     }
 
     if (req.method !== 'POST') return send(res, 405, { error: 'Method not allowed' });
-
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
     const action = body.action;
 
     if (action === 'check' || action === 'uncheck') {
-      const itemId = clean(body.itemId);
-      const nickname = clean(body.nickname, 50);
+      const itemId = clean(body.itemId), nickname = clean(body.nickname, 50);
       if (!itemId || !nickname) return send(res, 400, { error: 'itemId and nickname are required' });
-      if (action === 'check') {
-        await sql`INSERT INTO checklist_checks (item_id, nickname) VALUES (${itemId}, ${nickname}) ON CONFLICT (item_id, nickname) DO NOTHING`;
-      } else {
-        await sql`DELETE FROM checklist_checks WHERE item_id = ${itemId} AND nickname = ${nickname}`;
-      }
+      if (action === 'check') await sql`INSERT INTO checklist_checks (item_id, nickname) VALUES (${itemId}, ${nickname}) ON CONFLICT (item_id, nickname) DO NOTHING`;
+      else await sql`DELETE FROM checklist_checks WHERE item_id = ${itemId} AND nickname = ${nickname}`;
       return send(res, 200, { ok: true });
     }
 
     if (action === 'addItem') {
-      const itemId = clean(body.itemId);
-      const text = clean(body.text);
-      const nickname = clean(body.nickname, 50);
+      const itemId = clean(body.itemId), text = clean(body.text), nickname = clean(body.nickname, 50);
       if (!itemId || !text || !nickname) return send(res, 400, { error: 'itemId, text and nickname are required' });
       await sql`INSERT INTO checklist_custom_items (item_id, text, created_by) VALUES (${itemId}, ${text}, ${nickname}) ON CONFLICT (item_id) DO NOTHING`;
       return send(res, 200, { ok: true });
@@ -69,9 +61,7 @@ module.exports = async function handler(req, res) {
       const nickname = clean(body.nickname, 50);
       const itemIds = Array.isArray(body.itemIds) ? body.itemIds.map(v => clean(v)).filter(Boolean).slice(0, 100) : [];
       if (!nickname || !itemIds.length) return send(res, 400, { error: 'nickname and itemIds are required' });
-      for (const itemId of itemIds) {
-        await sql`INSERT INTO checklist_checks (item_id, nickname) VALUES (${itemId}, ${nickname}) ON CONFLICT (item_id, nickname) DO NOTHING`;
-      }
+      for (const itemId of itemIds) await sql`INSERT INTO checklist_checks (item_id, nickname) VALUES (${itemId}, ${nickname}) ON CONFLICT (item_id, nickname) DO NOTHING`;
       return send(res, 200, { ok: true });
     }
 
@@ -90,16 +80,13 @@ module.exports = async function handler(req, res) {
       await sql`DELETE FROM checklist_checks WHERE item_id LIKE 'ai-%'`;
       await sql`DELETE FROM checklist_custom_items WHERE item_id LIKE 'ai-%' OR item_id LIKE '__meta_%'`;
       if (mode === 'replace') await sql`DELETE FROM checklist_checks`;
-
       await sql`INSERT INTO checklist_custom_items (item_id, text, created_by) VALUES ('__meta_mode__', ${mode}, ${nickname})`;
       await sql`INSERT INTO checklist_custom_items (item_id, text, created_by) VALUES ('__meta_title__', ${title}, ${nickname})`;
 
-      const stamp = Date.now();
-      let index = 0;
+      const stamp = Date.now(); let index = 0;
       for (const raw of items) {
         const section = clean(raw.section, 35) || '✨ AI 추천';
-        const text = clean(raw.text, 55);
-        const reason = clean(raw.reason, 60);
+        const text = clean(raw.text, 55), reason = clean(raw.reason, 60);
         if (!text) continue;
         const id = `ai-${stamp}-${index++}`;
         const stored = clean(`${section}|||${text}|||${reason}`, 100);
