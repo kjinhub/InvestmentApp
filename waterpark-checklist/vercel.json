@@ -1,7 +1,3 @@
 {
-  "version": 2,
-  "functions": {
-    "api/checklist.js": { "runtime": "nodejs22.x" },
-    "api/generate-checklist.js": { "runtime": "nodejs22.x" }
-  }
+  "version": 2
 }
